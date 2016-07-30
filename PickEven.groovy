@@ -4,4 +4,8 @@ def PickEven(n,block) {
   }
 }
 
-PickEven(10, {println it})
+PickEven(10, { println it } )
+
+PickEven(10) {
+  evenNumber -> println evenNumber
+}
