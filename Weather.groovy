@@ -17,4 +17,9 @@ bldr.WEATHER {
 }
 
 
-dataSet = sql
+dataSet = sql.dataSet('WEATHER')
+citiesBelowFreezing = dataSet.findAll { it.TEMEPERATURE < 32}
+println "Cities below freezing:"
+citiesBelowFreezing.each {
+  println it.CITY
+}
