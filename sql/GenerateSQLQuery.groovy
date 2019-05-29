@@ -1,0 +1,122 @@
+package com.netapp.merge
+
+import groovy.sql.Sql
+import org.yaml.snakeyaml.Yaml
+import org.yaml.snakeyaml.constructor.Constructor
+
+import java.sql.SQLException
+
+class GenerateSelectQuery {
+
+    static void main(String[] args) {
+        generateStatement()
+    }
+
+    private static void generateStatement() {
+        Yaml parser = new Yaml()
+        def yamlentry = parser.load(("C:\\Users\\sridhari\\IdeaProjects\\CompareRecordCount\\src\\main\\groovy\\com\\netapp\\merge\\merge.yaml" as File).text)
+        String schemaName = ""
+        String tableName = ""
+        StringBuilder joinCondition
+        StringBuilder newWhereCondition
+        StringBuilder prevWhereCondition
+        StringBuilder updtWhereCondition
+        try {
+            def sql = Sql.newInstance("jdbc:oracle:thin:@10.103.165.174:2012:dstgni12", "datalake", "welcome!23", "oracle.jdbc.OracleDriver")
+            println("Got connection")
+
+            def source = yamlentry['source']
+
+            source.each {
+                schemaName = it.schema_name
+                tableName = it.table_name
+                StringBuilder selectStmt = new StringBuilder()
+                String query = "SELECT * FROM ${schemaName}.${tableName}"
+                println "Executing query ${query}"
+                sql.query(query, { resultSet ->
+                    String postfix = ""
+                    String colName = ""
+                    selectStmt.append("SELECT\n")
+                    def resultSetMetaData = resultSet.getMetaData()
+                    (1..resultSetMetaData.getColumnCount()).each {
+                        String col = resultSetMetaData.getColumnName(it).toLowerCase()
+                        selectStmt.append(postfix)
+
+                        if (resultSetMetaData.getColumnTypeName(it).equals("TIMESTAMP") || resultSetMetaData.getColumnTypeName(it).equals("DATE")) {
+                            colName = "from_unixtime(floor(incr." + col + "/1000)) " + col
+                        } else {
+                            colName = "incr." + col
+                        }
+
+                        postfix = ",\n"
+                        selectStmt.append(colName)
+                    }
+                    postfix = ""
+                    joinCondition = new StringBuilder()
+                    it.primary_key.each {
+                        joinCondition.append(postfix)
+                        joinCondition.append("orig.${it} = incr.${it}")
+                        postfix = " AND \n"
+                    }
+                    String rightJoin = """\nFROM ${schemaName}.${tableName}_temp orig 
+    RIGHT OUTER JOIN ${schemaName}.${tableName}_incr incr \n ON \n"""
+                    newWhereCondition = new StringBuilder()
+                    newWhereCondition.append("\n WHERE ")
+                    postfix = ""
+                    it.primary_key.each {
+                        newWhereCondition.append(postfix)
+                        newWhereCondition.append("orig.${it} IS NULL")
+                        postfix = " AND \n"
+                    }
+                    String leftJoin = """\nFROM ${schemaName}.${tableName}_temp orig 
+    LEFT OUTER JOIN ${schemaName}.${tableName}_incr incr \n ON \n """
+                    prevWhereCondition = new StringBuilder()
+                    prevWhereCondition.append("\n WHERE ")
+                    postfix = ""
+                    it.primary_key.each {
+                        prevWhereCondition.append(postfix)
+                        prevWhereCondition.append("incr.${it} IS NULL")
+                        postfix = " AND \n"
+                    }
+
+                    String innerJoin = """\nFROM ${schemaName}.${tableName}_temp orig 
+    JOIN ${schemaName}.${tableName}_incr incr \n ON \n """
+                    updtWhereCondition = new StringBuilder()
+                    updtWhereCondition.append("\n WHERE COALESCE(from_unixtime(floor(incr.last_update_date /1000)),'1900-01-01 01:01:00') > COALESCE(orig.last_update_date ,'1900-01-01 01:01:00') ")
+
+                    String finalNewQuery  = selectStmt.toString() + rightJoin + joinCondition.toString() + newWhereCondition.toString() + ";"
+                    String finalPrevQuery  = "SELECT orig.* " + leftJoin + joinCondition.toString() + prevWhereCondition.toString() + ";"
+                    String finalUpdtQuery = selectStmt.toString() + innerJoin + joinCondition.toString() + updtWhereCondition.toString() + ";"
+                    println finalNewQuery
+                    println finalPrevQuery
+                    println finalUpdtQuery
+                    File prevFile = new File(tableName+"_prev.sql")
+                    File newFile = new File(tableName+"_new.sql")
+                    File updtFile = new File(tableName+"_updt.sql")
+                    prevFile.append("DROP TABLE IF EXISTS ${schemaName}.${tableName};")
+                    prevFile.append("CREATE TABLE ${schemaName}.${tableName}_temp AS SELECT * FROM datalakedb.${tableName};")
+                    prevFile.append(finalPrevQuery)
+                    newFile.append(finalNewQuery)
+                    updtFile.append(finalUpdtQuery)
+                })
+
+            }
+
+            sql.close()
+            println("Connection closed")
+
+        }
+        catch (SQLException e) {
+            println "something went wrong 1"
+            e.printStackTrace()
+        } catch (Exception e) {
+            println "something went wrong 2"
+            e.printStackTrace() {
+            }
+
+
+        }
+    }
+
+
+}
